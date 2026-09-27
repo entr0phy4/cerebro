@@ -28,17 +28,32 @@ from pathlib import Path
 
 from cerebro_clients import AuthClient, CerebroAPIError, CerebroConnectionError
 
-# packages/cerebro-cli/src/cerebro_cli/shared_commands.py -> parents[4] is the monorepo
-# root (where compose.yaml lives) - same calculation as REPO_ROOT in the original
-# cerebro_memory cli.py, just that this file is one level deeper.
-REPO_ROOT = Path(__file__).resolve().parents[4]
+def _find_repo_root() -> Path | None:
+    """Best-effort monorepo root (parents[4] of this file -- where compose.yaml
+    lives), for `cerebro restore`'s `docker compose exec`, which only makes sense
+    against a local checkout. None when there's no such ancestor -- the standalone
+    PyInstaller binary (see .github/workflows/release-cli.yml) extracts this file
+    into a temp directory with just a few levels of parents, so the plain
+    `.parents[4]` indexing used to crash at import time before any command even
+    ran (found live: `cerebro --help` in the packaged binary raised `IndexError`).
+    Callers that need a real checkout must handle None explicitly instead of
+    relying on this crashing loudly for them.
+    """
+    parents = Path(__file__).resolve().parents
+    return parents[4] if len(parents) > 4 else None
 
-# `cerebro backup`'s default output directory: DELIBERATELY outside the
-# repo tree (a sibling of it, not inside) -- ecosistema-cerebro.md SS15, audit
-# criterion: a full dump (includes document content, which SS2/SS9 clarify
-# may carry secrets pasted in by mistake) must not be able to end up committed by
+
+REPO_ROOT = _find_repo_root()
+
+# `cerebro backup`'s default output directory. Not tied to REPO_ROOT (backup talks
+# straight to cerebro-auth's HTTP API now, no docker/repo dependency at all -- see
+# module docstring) -- uses the user's home directory so it also works from the
+# standalone binary, with no checkout in sight. DELIBERATELY still outside any repo
+# tree if one happens to exist nearby -- ecosistema-cerebro.md SS15, audit
+# criterion: a full dump (includes document content, which SS2/SS9 clarify may
+# carry secrets pasted in by mistake) must not be able to end up committed by
 # accident nor live under a versioned directory.
-DEFAULT_BACKUP_DIR = REPO_ROOT.parent / "cerebro-backups"
+DEFAULT_BACKUP_DIR = Path.home() / "cerebro-backups"
 
 POSTGRES_USER = "knowledgeos"  # service/user/DB name in compose.yaml - unchanged (SS5)
 POSTGRES_DB = "knowledgeos"
@@ -83,6 +98,15 @@ def cmd_backup(args: argparse.Namespace, *, client: AuthClient | None = None) ->
 
 
 def cmd_restore(args: argparse.Namespace) -> None:
+    if REPO_ROOT is None:
+        print(
+            "Error: 'cerebro restore' necesita correr desde un checkout del repo "
+            "cerebro (usa 'docker compose exec' contra compose.yaml) -- no disponible "
+            "desde el binario standalone.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     path = Path(args.file)
     if not path.exists():
         print(f"Error: no existe el archivo '{path}'", file=sys.stderr)

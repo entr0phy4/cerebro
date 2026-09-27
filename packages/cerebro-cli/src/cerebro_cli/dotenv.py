@@ -15,9 +15,11 @@ depend on a hand-generated shell wrapper.
 
 Only takes effect in an editable install inside the monorepo (where `packages/`
 exists relative to this file): if `cerebro-cli` were installed outside this repo (e.g.
-published to an index), `.env.production`/`.env` simply wouldn't be found under
-`REPO_ROOT` and `load_repo_dotenv()` would do nothing -- it's not a deployment
-requirement, it's a convenience for the user's current dev environment.
+published to an index, or frozen into the standalone PyInstaller binary -- see
+.github/workflows/release-cli.yml), there's no monorepo root to speak of at all
+(a frozen binary's `__file__` doesn't even have that many parent directories) and
+`load_repo_dotenv()` does nothing -- it's not a deployment requirement, it's a
+convenience for the user's current dev environment.
 
 Deliberately minimal parser (no new dependency like python-dotenv): one line
 per variable, `KEY=value`, comments with `#` (whole line or trailing after a
@@ -31,8 +33,14 @@ import os
 from pathlib import Path
 
 # packages/cerebro-cli/src/cerebro_cli/dotenv.py -> parents[4] is the monorepo
-# root (same calculation as REPO_ROOT in shared_commands.py).
-REPO_ROOT = Path(__file__).resolve().parents[4]
+# root (same calculation as REPO_ROOT in shared_commands.py). `len(parents) > 4`
+# guards the standalone binary case, where this file has too few ancestors and a
+# plain `.parents[4]` index would raise IndexError -- found live, this module-level
+# line runs on every single CLI invocation (main() calls load_repo_dotenv()
+# unconditionally), so it would have crashed literally every command in the
+# packaged binary.
+_parents = Path(__file__).resolve().parents
+REPO_ROOT = _parents[4] if len(_parents) > 4 else None
 
 
 def parse_dotenv(text: str) -> dict[str, str]:
@@ -71,6 +79,8 @@ def load_repo_dotenv(repo_root: Path | None = None, *, env: dict[str, str] | Non
     wins over both.
     """
     root = repo_root if repo_root is not None else REPO_ROOT
+    if root is None:
+        return
     target_env = env if env is not None else os.environ
 
     for filename in (".env.production", ".env"):

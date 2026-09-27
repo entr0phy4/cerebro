@@ -41,6 +41,19 @@ class TestLoadRepoDotenvPrecedence:
         load_repo_dotenv(tmp_path, env=env)
         assert env == {}
 
+    def test_no_repo_root_is_a_noop_not_a_crash(self, monkeypatch):
+        # Simulates the standalone PyInstaller binary, where this module's own
+        # module-level REPO_ROOT resolves to None (too few ancestors) -- found
+        # live: main() calls load_repo_dotenv() with no arguments on every
+        # invocation, so this used to crash before even parsing args (TypeError:
+        # unsupported operand type(s) for /: 'NoneType' and 'str').
+        import cerebro_cli.dotenv as dotenv_module
+
+        monkeypatch.setattr(dotenv_module, "REPO_ROOT", None)
+        env: dict[str, str] = {}
+        load_repo_dotenv(env=env)
+        assert env == {}
+
     def test_loads_values_from_env_file(self, tmp_path):
         (tmp_path / ".env").write_text("FOO=bar\n", encoding="utf-8")
         env: dict[str, str] = {}
