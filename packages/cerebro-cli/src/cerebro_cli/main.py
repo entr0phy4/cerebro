@@ -234,7 +234,7 @@ def _add_flows_subparser(sub: argparse._SubParsersAction) -> None:
 
 def _add_shared_subparsers(sub: argparse._SubParsersAction) -> None:
     p_backup = sub.add_parser("backup", help="Descarga un pg_dump completo via cerebro-auth (POST /backup, admin-only)")
-    p_backup.add_argument("--output", default=None, help="directorio de salida (default: ../cerebro-backups/)")
+    p_backup.add_argument("--output", default=None, help="directorio de salida (default: ~/cerebro-backups/)")
     p_backup.set_defaults(func=shared_commands.cmd_backup)
 
     p_restore = sub.add_parser("restore", help="Restaura un backup (DESTRUCTIVO)")
