@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-09-27
+
+### Fixed
+- The standalone CLI binary crashed on startup (`IndexError`) before parsing any
+  arguments: `REPO_ROOT` assumed a source checkout (`Path(__file__).parents[4]`),
+  which doesn't hold once PyInstaller freezes the file into a temp extraction
+  directory. Found by actually running the packaged `v2.6.0` binary, not just
+  building it — that release's binaries never worked and were pulled
+  (`gh release delete v2.6.0`, tag removed). `cerebro backup`'s default output
+  directory also no longer depends on `REPO_ROOT` (it never touched the repo
+  tree to begin with) — now `~/cerebro-backups`.
+
 ## [2.6.0] - 2026-09-27
 
 Unified authentication (`cerebro-auth`), plus remote backups and a standalone
@@ -203,7 +215,8 @@ ecosystem and the monorepo restructuring in `2.0.0`).
 - Scoped tokens (`read`/`write`/`admin`) and `allowed_contexts`, full Docker
   setup, `allowed_contexts` leak fixes found in the final audit.
 
-[Unreleased]: https://github.com/luisjdev0/cerebro/compare/v2.6.0...main
+[Unreleased]: https://github.com/luisjdev0/cerebro/compare/v2.6.1...main
+[2.6.1]: https://github.com/luisjdev0/cerebro/commit/90c4dd1
 [2.6.0]: https://github.com/luisjdev0/cerebro/commit/a433869
 [2.5.0]: https://github.com/luisjdev0/cerebro/commit/286e526
 [2.4.0]: https://github.com/luisjdev0/cerebro/commit/75d6758
