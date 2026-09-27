@@ -162,6 +162,22 @@ class TestFlowCrud:
         assert resp.status_code == 200, resp.text
         assert client.get(f"/flows/{flow['code']}", headers=auth_headers).status_code == 404
 
+    def test_delete_flow_with_recorded_runs_cascades_instead_of_500(self, client, auth_headers):
+        # Regression test: found live in production (2026-09-27) -- deleting a
+        # flow that had at least one run in flow_runs raised an unhandled
+        # asyncpg.exceptions.ForeignKeyViolationError (500), because
+        # flow_runs.definition_id's FK was missing ON DELETE CASCADE even though
+        # this was already documented/promised behavior everywhere else (the
+        # CLI's confirmation prompt, the MCP flow_delete docstring). Fixed in
+        # 003_flow_runs_cascade_delete.sql.
+        cat = _make_category(client, auth_headers)
+        flow = _make_flow(client, auth_headers, cat)
+        client.post(f"/flows/{flow['code']}/start", headers=auth_headers)
+
+        resp = client.delete(f"/flows/{flow['code']}", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert client.get(f"/flows/{flow['code']}", headers=auth_headers).status_code == 404
+
 
 # --------------------------------------------------------------------------- execution engine
 
