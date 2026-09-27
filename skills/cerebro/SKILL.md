@@ -1,9 +1,9 @@
 ---
 name: cerebro
-description: Protocolo obligatorio para usar el ecosistema "cerebro" (MCP con memoria persistente, documentos completos y flujos de trabajo). Actívala SIEMPRE al inicio de una conversación con el usuario, y cada vez que la respuesta pueda depender de quién es el usuario, sus preferencias, sus proyectos, decisiones pasadas, documentos guardados, o un proceso/checklist con pasos que deba ejecutarse o crearse — aunque el usuario no diga las palabras "memoria", "documento" o "flujo". Actívala también cuando el usuario comparta un hecho, preferencia, decisión o evento que valga la pena recordar; cuando quiera guardar/leer/editar/archivar un documento; cuando quiera ejecutar, retomar o crear un proceso paso a paso (onboarding, incidentes, checklists con aprobaciones); cuando pida recordar/olvidar/actualizar algo; o cuando pregunte qué sabes de él o de su trabajo. Si estás a punto de afirmar que desconoces al usuario, su contexto, un documento suyo, o cómo seguir un proceso en curso, esta skill aplica y te obliga a consultar cerebro primero, nunca a suponer.
+description: Protocolo obligatorio para usar el ecosistema "cerebro" (MCP con memoria persistente, documentos completos, flujos de trabajo, y administración de acceso). Actívala SIEMPRE al inicio de una conversación con el usuario, y cada vez que la respuesta pueda depender de quién es el usuario, sus preferencias, sus proyectos, decisiones pasadas, documentos guardados, o un proceso/checklist con pasos que deba ejecutarse o crearse — aunque el usuario no diga las palabras "memoria", "documento" o "flujo". Actívala también cuando el usuario comparta un hecho, preferencia, decisión o evento que valga la pena recordar; cuando quiera guardar/leer/editar/archivar un documento; cuando quiera ejecutar, retomar o crear un proceso paso a paso (onboarding, incidentes, checklists con aprobaciones); cuando pida recordar/olvidar/actualizar algo; cuando pregunte qué sabes de él o de su trabajo; o cuando pida crear/gestionar un usuario, grupo o token de acceso al propio cerebro. Si estás a punto de afirmar que desconoces al usuario, su contexto, un documento suyo, o cómo seguir un proceso en curso, esta skill aplica y te obliga a consultar cerebro primero, nunca a suponer.
 ---
 
-# Cerebro: memoria, documentos y flujos persistentes
+# Cerebro: memoria, documentos, flujos y administración de acceso
 
 "Cerebro" es la memoria, el repositorio de documentos y el motor de procesos a
 largo plazo del usuario. Las conversaciones se pierden entre sesiones; cerebro
@@ -11,9 +11,9 @@ no. Por eso la fuente de verdad sobre el usuario, sus proyectos, sus
 decisiones pasadas, sus documentos y sus procesos en curso es cerebro, nunca
 tu contexto de conversación ni tus suposiciones.
 
-Cerebro tiene tres módulos con propósitos distintos y complementarios,
-débilmente acoplados entre sí (un módulo puede referenciar a otro por URI o
-código, pero nunca hay acceso cruzado directo a sus datos):
+Cerebro tiene tres módulos de conocimiento con propósitos distintos y
+complementarios, débilmente acoplados entre sí (un módulo puede referenciar a
+otro por URI o código, pero nunca hay acceso cruzado directo a sus datos):
 
 - **cerebro-memory** (`memory_*`) — memoria destilada: hechos, preferencias,
   decisiones y eventos reducidos a 1–3 frases ("memory over conversation").
@@ -28,6 +28,15 @@ código, pero nunca hay acceso cruzado directo a sus datos):
   ejecutando las acciones reales con tus propias tools; cerebro-flows solo
   decide qué paso toca ver y cuándo. También puedes **crear** flujos nuevos,
   no solo ejecutarlos.
+
+Un cuarto módulo, distinto en naturaleza a los tres anteriores:
+
+- **cerebro-auth** (`auth_*`) — no guarda conocimiento del usuario, administra
+  el **acceso al propio ecosistema** (usuarios, grupos, tokens). Usalo
+  únicamente cuando el usuario pida explícitamente crear o gestionar un
+  usuario, un grupo o un token — nunca por iniciativa propia ni como parte
+  del protocolo de inicio de conversación de abajo (ver
+  `references/auth.md`).
 
 ## Regla cero: recordar antes de asumir
 
@@ -81,6 +90,7 @@ la duda, consultá: una consulta de más es barata; asumir mal, no.
 | Pregunta "¿dónde quedó guardada la guía/documento de X?" | `docs_search` o `docs_list` |
 | Pregunta "¿en qué paso quedó el proceso de X?" | `flow_get`/estado del `run_id` (ver `references/flows.md`) |
 | Quiere que un hecho apunte a un documento sin duplicar su contenido | `memory_remember` con `cerebro-docs://categoria/slug` en el `content` |
+| Pide crear/gestionar un usuario, grupo o token de acceso al propio cerebro | `auth_*` (ver `references/auth.md`) — distinto a las filas anteriores: no es conocimiento del usuario, es control de acceso |
 
 ## Referencias por módulo
 
@@ -94,6 +104,9 @@ en ese módulo, no hace falta cargarlos todos de una vez:
   categorías ocultas, redirects de ruta (`docs_*`).
 - **`references/flows.md`** — ejecutar un flujo paso a paso Y crear/editar
   definiciones nuevas, incluido el formato YAML (`flow_*`).
+- **`references/auth.md`** — crear/gestionar usuarios, grupos y tokens de
+  acceso al propio ecosistema (`auth_*`), solo cuando el usuario lo pida
+  explícitamente.
 
 ## Errores y honestidad
 
@@ -131,3 +144,7 @@ en ese módulo, no hace falta cargarlos todos de una vez:
    leyendo la definición completa para "adivinar" el siguiente paso.
 6. Nunca inventes recuerdos, documentos ni pasos de un proceso; nunca
    declares ignorancia sin haber consultado cerebro primero.
+7. ¿El usuario pidió explícitamente crear/gestionar un usuario, grupo o
+   token? → esa es la única puerta de entrada a `auth_*` (ver
+   `references/auth.md`) — nunca por iniciativa propia, y nunca como parte
+   de los pasos 1-6 de arriba.
