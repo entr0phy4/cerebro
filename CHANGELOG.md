@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-27
+
+Unified authentication (`cerebro-auth`), plus remote backups and a standalone
+CLI installer built on top of it.
+
 ### Added
-- `CLAUDE.md`, `LICENSE` (MIT) and this `CHANGELOG.md`.
+- **`cerebro-auth`** (new module): shared `cerebro_auth` schema (`users`,
+  `groups`, `user_groups`, `group_scopes`, `api_tokens`) backing every
+  service's identity. Two independent gates per request — which
+  modules/contexts are visible (`allowed_modules`/`module_scopes`,
+  `access_level`) and who owns the content (`owner_user_id` on
+  `memories`/`documents`/`flow_definitions`). `cerebro login`, `cerebro
+  user`/`group` commands, 8 `auth_*` MCP tools.
+- `POST /backup` on `cerebro-auth` (admin-only): streams a full `pg_dump` of
+  the whole shared Postgres instance straight to the client, no buffering, no
+  JSON envelope. `cerebro backup` now downloads from it instead of shelling
+  out to `docker compose exec`, so it works against any deployment with an
+  admin token.
+- First GitHub Actions workflow (`release-cli.yml`): builds generic `cerebro`
+  CLI binaries (Linux/Windows, PyInstaller) on tagged pushes and publishes them
+  to GitHub Releases. `gateway/install/install.sh`/`install.ps1`, served
+  statically by the gateway at `/install/*`, download the right binary
+  (configurable via `CEREBRO_REPO` for forks) and leave token/URL
+  configuration to `cerebro login`.
+
+### Changed
+- `cerebro-memory`/`cerebro-docs`/`cerebro-flows` lost their own local
+  `api_tokens` tables and `/tokens` routes — every request now validates
+  against the shared `cerebro_auth` schema (cross-schema query, same
+  Postgres, no network hop).
+
+### Breaking
+- Any token issued before this release (against a service's own local
+  `api_tokens` table) stops authenticating — a new token must be issued
+  through `cerebro-auth` (`POST /tokens` or `cerebro token create`).
 
 ## [2.5.0] - 2026-09-23
 
@@ -170,7 +203,8 @@ ecosystem and the monorepo restructuring in `2.0.0`).
 - Scoped tokens (`read`/`write`/`admin`) and `allowed_contexts`, full Docker
   setup, `allowed_contexts` leak fixes found in the final audit.
 
-[Unreleased]: https://github.com/luisjdev0/cerebro/compare/main...docs/claude-md-license-changelog
+[Unreleased]: https://github.com/luisjdev0/cerebro/compare/v2.6.0...main
+[2.6.0]: https://github.com/luisjdev0/cerebro/commit/a433869
 [2.5.0]: https://github.com/luisjdev0/cerebro/commit/286e526
 [2.4.0]: https://github.com/luisjdev0/cerebro/commit/75d6758
 [2.3.0]: https://github.com/luisjdev0/cerebro/commit/0d17897
