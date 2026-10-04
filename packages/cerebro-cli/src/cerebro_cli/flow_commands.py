@@ -8,10 +8,18 @@ by a model turn by turn via the MCP tools; it makes no sense typed by hand.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from cerebro_clients import CerebroAPIError, CerebroConnectionError, FlowsClient
+
+from cerebro_cli.console import fail, metrics, plain, say, table
+
+
+def _fail_request(exc: CerebroConnectionError | CerebroAPIError) -> None:
+    if isinstance(exc, CerebroConnectionError):
+        fail(f"No se pudo conectar con cerebro-flows: {exc}")
+    else:
+        fail(f"La API devolvio {exc.status_code}: {exc.detail}")
 
 
 def _client() -> FlowsClient:
@@ -21,22 +29,30 @@ def _client() -> FlowsClient:
 def _read_yaml(args: argparse.Namespace) -> str:
     path = Path(args.yaml_file)
     if not path.exists():
-        print(f"Error: no existe el archivo '{path}'", file=sys.stderr)
-        sys.exit(1)
+        fail(f"Error: no existe el archivo '{path}'")
     return path.read_text(encoding="utf-8")
 
 
 def _print_flow(flow: dict) -> None:
-    print(f"[{flow['category']}] {flow['code']} - {flow['name']}  (v{flow['current_version']}, {flow['status']})")
-    print(f"  id: {flow['id']}")
+    say(
+        f"[{flow['category']}] {flow['code']} - {flow['name']}  "
+        f"(v{flow['current_version']}, {flow['status']})"
+    )
+    say(f"  id: {flow['id']}", style="muted")
 
 
 def _print_flow_list(flows: list[dict]) -> None:
     if not flows:
-        print("(sin flujos)")
+        say("(sin flujos)", style="muted")
         return
-    for f in flows:
-        print(f"[{f['category']}] {f['code']} - {f['name']}  (v{f['current_version']}, {f['status']})")
+    table(
+        ["categoria", "code", "nombre", "version", "estado"],
+        [
+            [f["category"], f["code"], f["name"], f"v{f['current_version']}", f["status"]]
+            for f in flows
+        ],
+        styles=["label", "count", None, "count", "status"],
+    )
 
 
 # --------------------------------------------------------------------------- category
@@ -46,33 +62,26 @@ def cmd_category_create(args: argparse.Namespace, *, client: FlowsClient | None 
     client = client or _client()
     try:
         category = client.create_category(args.slug, args.code, args.name or args.slug, description=args.description)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Categoria '{category['slug']}' (code={category['code']}) creada.")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Categoria '{category['slug']}' (code={category['code']}) creada.", style="ok")
 
 
 def cmd_category_list(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
     client = client or _client()
     try:
         categories = client.list_categories()
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
     if not categories:
-        print("(sin categorias todavia)")
+        say("(sin categorias todavia)", style="muted")
         return
-    print(f"{'slug':<20} {'code':<8} {'name':<25} description")
-    print("-" * 90)
-    for c in categories:
-        print(f"{c['slug']:<20} {c['code']:<8} {c['name']:<25} {c.get('description') or ''}")
+    table(
+        ["slug", "code", "name", "description"],
+        [[c["slug"], c["code"], c["name"], c.get("description") or ""] for c in categories],
+        styles=["label", "count", None, "muted"],
+    )
 
 
 # --------------------------------------------------------------------------- flow definitions
@@ -84,12 +93,10 @@ def cmd_validate(args: argparse.Namespace, *, client: FlowsClient | None = None)
     try:
         client.validate_flow(yaml_content)
     except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail_request(exc)
     except CerebroAPIError as exc:
-        print(f"Invalido: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print("Valido.")
+        fail(f"Invalido: {exc.detail}")
+    say("Valido.", style="ok")
 
 
 def cmd_save(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
@@ -97,38 +104,26 @@ def cmd_save(args: argparse.Namespace, *, client: FlowsClient | None = None) -> 
     yaml_content = _read_yaml(args)
     try:
         flow = client.create_flow(args.category, yaml_content, code=args.code)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Flujo guardado: {flow['code']} (id={flow['id']}).")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Flujo guardado: {flow['code']} (id={flow['id']}).", style="ok")
 
 
 def cmd_get(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
     client = client or _client()
     try:
         flow = client.get_flow(args.code)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(flow["yaml_content"])
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    plain(flow["yaml_content"])
 
 
 def cmd_list(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
     client = client or _client()
     try:
         flows = client.list_flows(category=args.category, limit=args.limit, offset=args.offset)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
     _print_flow_list(flows)
 
 
@@ -137,13 +132,9 @@ def cmd_update(args: argparse.Namespace, *, client: FlowsClient | None = None) -
     yaml_content = _read_yaml(args)
     try:
         flow = client.update_flow(args.code, yaml_content)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Flujo {flow['code']} actualizado a v{flow['current_version']}.")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Flujo {flow['code']} actualizado a v{flow['current_version']}.", style="ok")
 
 
 def cmd_delete(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
@@ -151,18 +142,14 @@ def cmd_delete(args: argparse.Namespace, *, client: FlowsClient | None = None) -
     if not args.yes:
         answer = input(f"Esto borrara el flujo {args.code} (y su historial de versiones/ejecuciones). Escribe 'yes' para continuar: ")
         if answer.strip().lower() != "yes":
-            print("Cancelado.")
+            say("Cancelado.", style="muted")
             return
 
     try:
         client.delete_flow(args.code)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Flujo {args.code} borrado.")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Flujo {args.code} borrado.", style="ok")
 
 
 # --------------------------------------------------------------------------- stats
@@ -172,15 +159,14 @@ def cmd_stats(args: argparse.Namespace, *, client: FlowsClient | None = None) ->
     client = client or _client()
     try:
         data = client.get_stats()
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-flows: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print("Estadisticas de cerebro-flows")
-    print("-" * 40)
-    print(f"  categorias: {data['categories']}")
-    print(f"  flujos:     {data['flows']}")
-    print(f"  runs:       {data['runs']}")
+    metrics(
+        "Estadisticas de cerebro-flows",
+        [
+            ("categorias", data["categories"]),
+            ("flujos", data["flows"]),
+            ("runs", data["runs"]),
+        ],
+    )

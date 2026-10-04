@@ -14,6 +14,15 @@ from pathlib import Path
 from cerebro_clients import CerebroAPIError, CerebroConnectionError, DocsClient
 from cerebro_memory.markdown_importer import iter_markdown_files
 
+from cerebro_cli.console import fail, metrics, plain, say, table
+
+
+def _fail_request(exc: CerebroConnectionError | CerebroAPIError) -> None:
+    if isinstance(exc, CerebroConnectionError):
+        fail(f"No se pudo conectar con cerebro-docs: {exc}")
+    else:
+        fail(f"La API devolvio {exc.status_code}: {exc.detail}")
+
 _TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
 
@@ -27,28 +36,36 @@ def _read_content(args: argparse.Namespace) -> str:
     if args.content_file:
         path = Path(args.content_file)
         if not path.exists():
-            print(f"Error: no existe el archivo '{path}'", file=sys.stderr)
-            sys.exit(1)
+            fail(f"Error: no existe el archivo '{path}'")
         return path.read_text(encoding="utf-8")
     if sys.stdin.isatty():
-        print("Error: pasa --content-file o redirige el contenido por stdin.", file=sys.stderr)
-        sys.exit(1)
+        fail("Error: pasa --content-file o redirige el contenido por stdin.")
     return sys.stdin.read()
 
 
 def _print_document(doc: dict) -> None:
-    print(f"[{doc['category']}/{doc['slug']}] {doc['title']}")
-    print(f"  id: {doc['id']}")
-    print(f"  creado por: {doc.get('created_by') or 'unknown'}  actualizado: {doc['updated_at']}")
+    say(f"[{doc['category']}/{doc['slug']}] {doc['title']}")
+    say(f"  id: {doc['id']}", style="muted")
+    say(
+        f"  creado por: {doc.get('created_by') or 'unknown'}  actualizado: {doc['updated_at']}",
+        style="muted",
+    )
 
 
 def _print_document_list(docs: list[dict]) -> None:
     if not docs:
-        print("(sin documentos)")
+        say("(sin documentos)", style="muted")
         return
+    show_score = any(d.get("score") is not None for d in docs)
+    headers = ["ruta", "titulo", "score"] if show_score else ["ruta", "titulo"]
+    column_styles = ["label", None, "count"] if show_score else ["label", None]
+    rows = []
     for d in docs:
-        score = f"  score={d['score']:.3f}" if d.get("score") is not None else ""
-        print(f"[{d['category']}/{d['slug']}] {d['title']}{score}")
+        row = [f"{d['category']}/{d['slug']}", d["title"]]
+        if show_score:
+            row.append(f"{d['score']:.3f}" if d.get("score") is not None else "")
+        rows.append(row)
+    table(headers, rows, styles=column_styles)
 
 
 # --------------------------------------------------------------------------- category
@@ -64,34 +81,27 @@ def cmd_category_create(args: argparse.Namespace, *, client: DocsClient | None =
             hidden=args.hidden,
             locked=args.locked,
         )
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
     flags = " (oculta, bloqueada)" if category["locked"] else " (oculta)" if category["hidden"] else ""
-    print(f"Categoria '{category['slug']}' creada{flags}.")
+    say(f"Categoria '{category['slug']}' creada{flags}.", style="ok")
 
 
 def cmd_category_list(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     client = client or _client()
     try:
         categories = client.list_categories()
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
     if not categories:
-        print("(sin categorias todavia)")
+        say("(sin categorias todavia)", style="muted")
         return
-    print(f"{'slug':<25} {'name':<30} description")
-    print("-" * 90)
-    for c in categories:
-        print(f"{c['slug']:<25} {c['name']:<30} {c.get('description') or ''}")
+    table(
+        ["slug", "name", "description"],
+        [[c["slug"], c["name"], c.get("description") or ""] for c in categories],
+        styles=["label", None, "muted"],
+    )
 
 
 def cmd_category_rename(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
@@ -101,26 +111,18 @@ def cmd_category_rename(args: argparse.Namespace, *, client: DocsClient | None =
         category = client.update_category(
             args.slug, new_slug=args.new_slug, name=args.name, description=args.description, hidden=hidden
         )
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Categoria '{args.slug}' -> '{category['slug']}'.")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Categoria '{args.slug}' -> '{category['slug']}'.", style="ok")
 
 
 def cmd_category_delete(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     client = client or _client()
     try:
         result = client.delete_category(args.slug, force=args.force)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Categoria '{args.slug}' borrada (documentos borrados: {result['documents_deleted']}).")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Categoria '{args.slug}' borrada (documentos borrados: {result['documents_deleted']}).", style="ok")
 
 
 # --------------------------------------------------------------------------- documents
@@ -131,26 +133,18 @@ def cmd_save(args: argparse.Namespace, *, client: DocsClient | None = None) -> N
     content = _read_content(args)
     try:
         document = client.create_document(args.title, content, args.category, slug=args.slug)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Documento guardado en {document['category']}/{document['slug']} (id={document['id']}).")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Documento guardado en {document['category']}/{document['slug']} (id={document['id']}).", style="ok")
 
 
 def cmd_get(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     client = client or _client()
     try:
         document = client.get_document(args.category, args.slug)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(document["content"])
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    plain(document["content"])
 
 
 def cmd_list(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
@@ -160,12 +154,8 @@ def cmd_list(args: argparse.Namespace, *, client: DocsClient | None = None) -> N
             documents = client.list_archived_documents(category=args.category, limit=args.limit, offset=args.offset)
         else:
             documents = client.list_documents(category=args.category, limit=args.limit, offset=args.offset)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
     _print_document_list(documents)
 
 
@@ -173,12 +163,8 @@ def cmd_search(args: argparse.Namespace, *, client: DocsClient | None = None) ->
     client = client or _client()
     try:
         documents = client.list_documents(category=args.category, q=args.query, limit=args.limit, offset=args.offset)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
     _print_document_list(documents)
 
 
@@ -187,13 +173,9 @@ def cmd_update(args: argparse.Namespace, *, client: DocsClient | None = None) ->
     content = _read_content(args)
     try:
         document = client.update_document(args.document_id, args.title, content, args.category, slug=args.slug)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Documento {document['id']} actualizado ({document['category']}/{document['slug']}).")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Documento {document['id']} actualizado ({document['category']}/{document['slug']}).", style="ok")
 
 
 def cmd_patch_section(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
@@ -216,58 +198,56 @@ def cmd_patch_section(args: argparse.Namespace, *, client: DocsClient | None = N
             create_if_missing=args.create_if_missing,
             new_heading_level=args.new_heading_level,
         )
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Seccion '{args.heading}' ({args.operation}) aplicada a {document['category']}/{document['slug']}.")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(
+        f"Seccion '{args.heading}' ({args.operation}) aplicada a {document['category']}/{document['slug']}.",
+        style="ok",
+    )
 
 
 def cmd_archive(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     client = client or _client()
     try:
         document = client.archive_document(args.document_id)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Documento {document['id']} archivado ({document['category']}/{document['slug']}).")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Documento {document['id']} archivado ({document['category']}/{document['slug']}).", style="ok")
 
 
 def cmd_unarchive(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     client = client or _client()
     try:
         document = client.unarchive_document(args.document_id)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Documento {document['id']} desarchivado ({document['category']}/{document['slug']}).")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Documento {document['id']} desarchivado ({document['category']}/{document['slug']}).", style="ok")
 
 
 def cmd_history(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     client = client or _client()
     try:
         versions = client.get_document_versions(args.document_id)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
     if not versions:
-        print("(sin versiones anteriores)")
+        say("(sin versiones anteriores)", style="muted")
         return
-    for v in versions:
-        preview = v["content"].splitlines()[0][:80] if v["content"].strip() else ""
-        print(f"v{v['version_number']} [{v['category']}] \"{v['title']}\"  {v['created_at']}  {preview}")
+    table(
+        ["version", "categoria", "titulo", "creado", "preview"],
+        [
+            [
+                f"v{v['version_number']}",
+                v["category"],
+                v["title"],
+                v["created_at"],
+                v["content"].splitlines()[0][:80] if v["content"].strip() else "",
+            ]
+            for v in versions
+        ],
+        styles=["count", "label", None, "muted", "muted"],
+    )
 
 
 def cmd_delete(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
@@ -275,18 +255,14 @@ def cmd_delete(args: argparse.Namespace, *, client: DocsClient | None = None) ->
     if not args.yes:
         answer = input(f"Esto borrara el documento {args.document_id} (y su historial de versiones). Escribe 'yes' para continuar: ")
         if answer.strip().lower() != "yes":
-            print("Cancelado.")
+            say("Cancelado.", style="muted")
             return
 
     try:
         client.delete_document(args.document_id)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Documento {args.document_id} borrado.")
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
+    say(f"Documento {args.document_id} borrado.", style="ok")
 
 
 # --------------------------------------------------------------------------- stats
@@ -296,18 +272,17 @@ def cmd_stats(args: argparse.Namespace, *, client: DocsClient | None = None) -> 
     client = client or _client()
     try:
         data = client.get_stats()
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print("Estadisticas de cerebro-docs")
-    print("-" * 40)
-    print(f"  categorias: {data['categories']}")
-    print(f"  documentos: {data['documents']}")
-    print(f"  versiones:  {data['versions']}")
+    metrics(
+        "Estadisticas de cerebro-docs",
+        [
+            ("categorias", data["categories"]),
+            ("documentos", data["documents"]),
+            ("versiones", data["versions"]),
+        ],
+    )
 
 
 # --------------------------------------------------------------------------- import-markdown
@@ -327,19 +302,18 @@ def _derive_title_and_slug(path: Path, text: str) -> tuple[str, str]:
 def cmd_import_markdown(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     root = Path(args.path)
     if not root.exists():
-        print(f"Error: no existe la ruta '{root}'", file=sys.stderr)
-        sys.exit(1)
+        fail(f"Error: no existe la ruta '{root}'")
 
     files = iter_markdown_files(root)
     if not files:
-        print(f"No se encontraron archivos .md en '{root}'")
+        say(f"No se encontraron archivos .md en '{root}'", style="warning")
         return
 
     if args.dry_run:
-        print(f"[dry-run] {len(files)} archivo(s) en '{root}' -> categoria '{args.category}':")
+        say(f"[dry-run] {len(files)} archivo(s) en '{root}' -> categoria '{args.category}':", style="muted")
         for f in files:
             title, slug = _derive_title_and_slug(f, f.read_text(encoding="utf-8"))
-            print(f"  - [{args.category}/{slug}] \"{title}\" <- {f}")
+            say(f"  - [{args.category}/{slug}] \"{title}\" <- {f}")
         return
 
     client = client or _client()
@@ -355,32 +329,38 @@ def cmd_import_markdown(args: argparse.Namespace, *, client: DocsClient | None =
         except CerebroAPIError as exc:
             if exc.status_code != 404:
                 rejected += 1
-                print(f"  x error verificando duplicado ({exc.status_code}): \"{title}\" -> {exc.detail}")
+                say(
+                    f"  x error verificando duplicado ({exc.status_code}): \"{title}\" -> {exc.detail}",
+                    style="error",
+                )
                 continue
         except CerebroConnectionError as exc:
-            print(f"No se pudo conectar con cerebro-docs: {exc}", file=sys.stderr)
-            sys.exit(1)
+            _fail_request(exc)
 
         if existing is not None and not args.update:
             skipped += 1
-            print(f"  = ya existe, omitido: \"{title}\" ({args.category}/{slug})")
+            say(f"  = ya existe, omitido: \"{title}\" ({args.category}/{slug})", style="warning")
             continue
 
         try:
             if existing is not None:
                 client.update_document(existing["id"], title, text, args.category, slug=slug)
                 updated += 1
-                print(f"  ~ actualizado: \"{title}\" ({args.category}/{slug})")
+                say(f"  ~ actualizado: \"{title}\" ({args.category}/{slug})", style="ok")
             else:
                 client.create_document(title, text, args.category, slug=slug)
                 imported += 1
-                print(f"  + importado: \"{title}\" ({args.category}/{slug})")
+                say(f"  + importado: \"{title}\" ({args.category}/{slug})", style="ok")
         except CerebroConnectionError as exc:
             rejected += 1
-            print(f"  x error de conexion: \"{title}\" -> {exc}")
+            say(f"  x error de conexion: \"{title}\" -> {exc}", style="error")
         except CerebroAPIError as exc:
             rejected += 1
-            print(f"  x rechazado ({exc.status_code}): \"{title}\" -> {exc.detail}")
+            say(f"  x rechazado ({exc.status_code}): \"{title}\" -> {exc.detail}", style="error")
 
-    print()
-    print(f"Importados: {imported}  Actualizados: {updated}  Omitidos (ya existian): {skipped}  Rechazados: {rejected}")
+    say()
+    say(
+        f"Importados: {imported}  Actualizados: {updated}  "
+        f"Omitidos (ya existian): {skipped}  Rechazados: {rejected}",
+        style="ok" if rejected == 0 else "warning",
+    )

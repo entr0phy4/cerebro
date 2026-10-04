@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `cerebro-cli` renders terminal output through Rich (`cerebro_cli.console`:
+  `say`, `warn`, `error`, `fail`, `plain`, `reveal`, `table`, `metrics`,
+  `notice`). Listings are tables with colored headers, identifiers and status
+  words; stats are panels. Color only on a TTY. Document bodies, YAML and
+  tokens stay plain text so they can be piped.
+
 ## [2.6.1] - 2026-09-27
 
 ### Fixed
