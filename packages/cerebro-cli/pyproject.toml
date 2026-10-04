@@ -14,6 +14,10 @@ dependencies = [
     # eliminan (ecosistema-cerebro.md SS4/SS14: cerebro-memory queda como servicio
     # API puro).
     "cerebro-memory",
+    # Salida de terminal. Los comandos la usan via cerebro_cli.console; el color
+    # solo aparece en un TTY. PyInstaller la empaqueta solo cuando algún módulo
+    # importado desde main.py importa esa consola.
+    "rich>=13.7",
 ]
 
 [project.optional-dependencies]

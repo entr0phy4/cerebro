@@ -24,11 +24,18 @@ Password-based login is explicitly out of scope here (future iteration) -- only 
 from __future__ import annotations
 
 import argparse
-import sys
 
 from cerebro_clients import AuthClient, CerebroAPIError, CerebroConnectionError
 
+from cerebro_cli.console import fail, say, table
 from cerebro_cli.tokens import save_login_config
+
+
+def _fail_request(exc: CerebroConnectionError | CerebroAPIError) -> None:
+    if isinstance(exc, CerebroConnectionError):
+        fail(f"No se pudo conectar con cerebro-auth: {exc}")
+    else:
+        fail(f"La API devolvio {exc.status_code}: {exc.detail}")
 
 
 def _client(url: str | None = None) -> AuthClient:
@@ -56,25 +63,24 @@ def cmd_login(args: argparse.Namespace, *, client: AuthClient | None = None) -> 
     try:
         result = client.login(args.token)
     except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail_request(exc)
     except CerebroAPIError as exc:
         if exc.status_code == 401:
-            print("Error: token invalido.", file=sys.stderr)
+            fail("Error: token invalido.")
         else:
-            print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+            _fail_request(exc)
 
     # Only persist once login actually succeeded - never write a token that was
     # never validated.
     save_login_config(args.token, args.url)
 
     modules = result.get("allowed_modules") or []
-    print(
+    say(
         f"Sesion iniciada como '{result.get('name')}' "
-        f"(access_level: {result.get('access_level')}; modulos: {', '.join(modules) or 'todos'})."
+        f"(access_level: {result.get('access_level')}; modulos: {', '.join(modules) or 'todos'}).",
+        style="ok",
     )
-    print("Credenciales guardadas en ~/.cerebro/config.json.")
+    say("Credenciales guardadas en ~/.cerebro/config.json.", style="muted")
 
 
 # --------------------------------------------------------------------------- user
@@ -84,16 +90,13 @@ def cmd_user_create(args: argparse.Namespace, *, client: AuthClient | None = Non
     client = client or _client()
     try:
         user = client.create_user(args.name, email=args.email, access_level=args.access_level)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print(
+    say(
         f"Usuario '{user.get('name', args.name)}' creado "
-        f"(id: {user.get('id')}; access_level: {user.get('access_level')})."
+        f"(id: {user.get('id')}; access_level: {user.get('access_level')}).",
+        style="ok",
     )
 
 
@@ -101,21 +104,18 @@ def cmd_user_list(args: argparse.Namespace, *, client: AuthClient | None = None)
     client = client or _client()
     try:
         users = client.list_users()
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
     if not users:
-        print("(sin usuarios todavia)")
+        say("(sin usuarios todavia)", style="muted")
         return
 
-    print(f"{'name':<25} {'email':<30} {'access_level':<12} id")
-    print("-" * 100)
-    for u in users:
-        print(f"{u['name']:<25} {(u.get('email') or ''):<30} {u.get('access_level', ''):<12} {u.get('id', '')}")
+    table(
+        ["name", "email", "access_level", "id"],
+        [[u["name"], u.get("email") or "", u.get("access_level", ""), u.get("id", "")] for u in users],
+        styles=["label", None, "status", "muted"],
+    )
 
 
 # --------------------------------------------------------------------------- group
@@ -125,14 +125,10 @@ def cmd_group_create(args: argparse.Namespace, *, client: AuthClient | None = No
     client = client or _client()
     try:
         group = client.create_group(args.slug, args.name or args.slug)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print(f"Grupo '{group.get('slug', args.slug)}' creado.")
+    say(f"Grupo '{group.get('slug', args.slug)}' creado.", style="ok")
 
 
 def cmd_group_set_scopes(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
@@ -149,25 +145,17 @@ def cmd_group_set_scopes(args: argparse.Namespace, *, client: AuthClient | None 
 
     try:
         client.set_group_scopes(args.slug, modules, module_scopes=module_scopes or None)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print(f"Scopes de '{args.slug}' actualizados (modulos: {', '.join(modules)}).")
+    say(f"Scopes de '{args.slug}' actualizados (modulos: {', '.join(modules)}).", style="ok")
 
 
 def cmd_group_add_member(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
     client = client or _client()
     try:
         client.add_group_member(args.slug, args.user)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print(f"Usuario '{args.user}' agregado al grupo '{args.slug}'.")
+    say(f"Usuario '{args.user}' agregado al grupo '{args.slug}'.", style="ok")

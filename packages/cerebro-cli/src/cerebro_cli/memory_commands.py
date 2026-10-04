@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from cerebro_clients import CerebroAPIError, CerebroConnectionError, MemoryClient
 from cerebro_memory.markdown_importer import ParsedMemory, iter_markdown_files, parse_markdown_file
+
+from cerebro_cli.console import fail, metrics, notice, reveal, say, table, warn
 
 # The RRF score of a hit that wins rank #1 in both vector search and full
 # text search is ~2/(60+1) ~= 0.033 (see cerebro_memory.retrieval.reciprocal_rank_fusion,
@@ -37,6 +38,13 @@ def _client() -> MemoryClient:
     return MemoryClient()
 
 
+def _fail_request(exc: CerebroConnectionError | CerebroAPIError) -> None:
+    if isinstance(exc, CerebroConnectionError):
+        fail(f"No se pudo conectar con cerebro-memory: {exc}")
+    else:
+        fail(f"La API devolvio {exc.status_code}: {exc.detail}")
+
+
 # --------------------------------------------------------------------------- stats
 
 
@@ -44,40 +52,45 @@ def cmd_stats(args: argparse.Namespace, *, client: MemoryClient | None = None) -
     client = client or _client()
     try:
         data = client.get_stats()
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-memory: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print("Memorias por contexto")
-    print("-" * 60)
     rows = data.get("memories_by_context", [])
     if not rows:
-        print("  (sin memorias todavia)")
-    for row in rows:
-        print(f"  {row['context']:<30} {row['status']:<12} {row['count']}")
+        notice("Memorias por contexto", "(sin memorias todavia)")
+    else:
+        table(
+            ["context", "status", "count"],
+            [[row["context"], row["status"], row["count"]] for row in rows],
+            styles=["label", "status", "count"],
+            frame="Memorias por contexto",
+        )
 
-    print()
-    print("Desambiguaciones (Context Engine, Fase 2/4)")
-    print("-" * 60)
     d = data.get("disambiguations", {})
-    print(f"  total: {d.get('total', 0)}")
-    print(f"    auto (scoring determinista):  {d.get('auto', 0)}")
-    print(f"    local_model (Fase 4):         {d.get('local_model', 0)}")
-    print(f"    agent (agente/MCP eligio):    {d.get('agent', 0)}")
-    print(f"    user:                         {d.get('user', 0)}")
-    print(f"    sin resolver:                 {d.get('unresolved', 0)}")
+    unresolved = d.get("unresolved", 0)
+    metrics(
+        "Desambiguaciones (Context Engine, Fase 2/4)",
+        [
+            ("total", d.get("total", 0)),
+            ("auto (scoring determinista)", d.get("auto", 0)),
+            ("local_model (Fase 4)", d.get("local_model", 0)),
+            ("agent (agente/MCP eligio)", d.get("agent", 0)),
+            ("user", d.get("user", 0)),
+            ("sin resolver", unresolved),
+        ],
+        styles=["count", "ok", "muted", "label", "label", "warning" if unresolved else "muted"],
+    )
 
-    print()
-    print("Preferencias aprendidas (top 20 por peso)")
-    print("-" * 60)
     prefs = data.get("preferences_learned", [])[:20]
     if not prefs:
-        print("  (ninguna todavia)")
-    for p in prefs:
-        print(f"  {p['context']:<25} {p['term']:<20} peso={p['weight']:.2f}")
+        notice("Preferencias aprendidas (top 20 por peso)", "(ninguna todavia)")
+    else:
+        table(
+            ["context", "term", "peso"],
+            [[p["context"], p["term"], f"{p['weight']:.2f}"] for p in prefs],
+            styles=["label", None, "count"],
+            frame="Preferencias aprendidas (top 20 por peso)",
+        )
 
 
 # --------------------------------------------------------------------------- export-disambiguations
@@ -87,12 +100,8 @@ def cmd_export_disambiguations(args: argparse.Namespace, *, client: MemoryClient
     client = client or _client()
     try:
         rows = client.export_disambiguations(resolved_only=args.resolved_only)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-memory: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
     out_path = Path(args.output) if args.output else Path("disambiguations_export.jsonl")
     with open(out_path, "w", encoding="utf-8") as fh:
@@ -100,11 +109,12 @@ def cmd_export_disambiguations(args: argparse.Namespace, *, client: MemoryClient
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     n = len(rows)
-    print(f"Exportadas {n} desambiguaciones a {out_path}")
-    print(
+    say(f"Exportadas {n} desambiguaciones a {out_path}", style="ok")
+    say(
         f"({n}/{DISAMBIGUATION_TRAINING_THRESHOLD}) el plan sugiere ~"
         f"{DISAMBIGUATION_TRAINING_THRESHOLD} resoluciones registradas antes de "
-        "considerar fine-tuning de un clasificador local (Fase 4, plan_v2.md SS8)."
+        "considerar fine-tuning de un clasificador local (Fase 4, plan_v2.md SS8).",
+        style="muted",
     )
 
 
@@ -117,7 +127,7 @@ def _collect_memories(files: list[Path]) -> list[tuple[Path, ParsedMemory]]:
         try:
             memories = parse_markdown_file(f)
         except (OSError, UnicodeDecodeError) as exc:
-            print(f"  ! error leyendo {f}: {exc}", file=sys.stderr)
+            warn(f"  ! error leyendo {f}: {exc}")
             continue
         for mem in memories:
             collected.append((f, mem))
@@ -130,21 +140,18 @@ def _ensure_context(client: MemoryClient, args: argparse.Namespace) -> None:
         return
 
     if not args.create_context:
-        print(
+        fail(
             f"Error: el contexto '{args.context}' no existe. Usa --create-context "
-            "para crearlo (opcionalmente con --context-description).",
-            file=sys.stderr,
+            "para crearlo (opcionalmente con --context-description)."
         )
-        sys.exit(1)
 
     description = args.context_description or f"Memorias importadas desde archivos Markdown ({args.path})"
     try:
         client.create_context(args.context, args.context, "domain", description=description)
-        print(f"Contexto '{args.context}' creado.")
+        say(f"Contexto '{args.context}' creado.", style="ok")
     except CerebroAPIError as exc:
         if exc.status_code != 409:
-            print(f"Error creando el contexto '{args.context}': {exc.detail}", file=sys.stderr)
-            sys.exit(1)
+            fail(f"Error creando el contexto '{args.context}': {exc.detail}")
 
 
 def _is_duplicate(client: MemoryClient, mem: ParsedMemory, context: str) -> bool:
@@ -163,32 +170,30 @@ def _is_duplicate(client: MemoryClient, mem: ParsedMemory, context: str) -> bool
 def cmd_import_markdown(args: argparse.Namespace, *, client: MemoryClient | None = None) -> None:
     root = Path(args.path)
     if not root.exists():
-        print(f"Error: no existe la ruta '{root}'", file=sys.stderr)
-        sys.exit(1)
+        fail(f"Error: no existe la ruta '{root}'")
 
     files = iter_markdown_files(root)
     if not files:
-        print(f"No se encontraron archivos .md en '{root}'")
+        say(f"No se encontraron archivos .md en '{root}'", style="warning")
         return
 
     memories = _collect_memories(files)
     if not memories:
-        print(f"Se leyeron {len(files)} archivo(s) pero no se detecto ninguna memoria importable.")
+        say(f"Se leyeron {len(files)} archivo(s) pero no se detecto ninguna memoria importable.", style="warning")
         return
 
     if args.dry_run:
-        print(f"[dry-run] {len(memories)} memoria(s) detectada(s) en {len(files)} archivo(s):")
+        say(f"[dry-run] {len(memories)} memoria(s) detectada(s) en {len(files)} archivo(s):", style="muted")
         for f, mem in memories:
             mem_type = args.type_ or mem.type
-            print(f"  - [{mem_type}] \"{mem.title}\" ({len(mem.content)} chars) <- {f}")
+            say(f"  - [{mem_type}] \"{mem.title}\" ({len(mem.content)} chars) <- {f}")
         return
 
     client = client or _client()
     try:
         _ensure_context(client, args)
     except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-memory: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail_request(exc)
 
     imported = duplicated = rejected = 0
 
@@ -197,7 +202,7 @@ def cmd_import_markdown(args: argparse.Namespace, *, client: MemoryClient | None
 
         if _is_duplicate(client, mem, args.context):
             duplicated += 1
-            print(f"  = duplicada: \"{mem.title}\"")
+            say(f"  = duplicada: \"{mem.title}\"", style="warning")
             continue
 
         try:
@@ -206,18 +211,21 @@ def cmd_import_markdown(args: argparse.Namespace, *, client: MemoryClient | None
             )
         except CerebroConnectionError as exc:
             rejected += 1
-            print(f"  x error de conexion: \"{mem.title}\" -> {exc}")
+            say(f"  x error de conexion: \"{mem.title}\" -> {exc}", style="error")
             continue
         except CerebroAPIError as exc:
             rejected += 1
-            print(f"  x rechazada ({exc.status_code}): \"{mem.title}\" -> {exc.detail}")
+            say(f"  x rechazada ({exc.status_code}): \"{mem.title}\" -> {exc.detail}", style="error")
             continue
 
         imported += 1
-        print(f"  + importada: \"{mem.title}\"")
+        say(f"  + importada: \"{mem.title}\"", style="ok")
 
-    print()
-    print(f"Resumen: {imported} importadas, {duplicated} duplicadas (saltadas), {rejected} rechazadas.")
+    say()
+    say(
+        f"Resumen: {imported} importadas, {duplicated} duplicadas (saltadas), {rejected} rechazadas.",
+        style="ok" if rejected == 0 else "warning",
+    )
 
 
 # --------------------------------------------------------------------------- token (escopado a memory)
@@ -230,23 +238,17 @@ def cmd_token_create(args: argparse.Namespace, *, client: MemoryClient | None = 
 
     try:
         data = client.create_token(args.name, scopes, allowed_contexts=contexts)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-memory: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
     contexts_desc = ", ".join(data["allowed_contexts"]) if data.get("allowed_contexts") else "todos"
-    print(f"Token creado para '{data['name']}' (scopes: {', '.join(data['scopes'])}; contextos: {contexts_desc}).")
-    print()
-    print(f"  {data['token']}")
-    print()
-    print(
+    reveal(
+        f"Token creado para '{data['name']}' (scopes: {', '.join(data['scopes'])}; contextos: {contexts_desc}).",
+        data["token"],
         "Guarda este token ahora - cerebro-memory solo guarda su hash SHA-256 y no puede "
         "volver a mostrarlo. Usalo como CEREBRO_TOKEN o Authorization: Bearer <token> "
         "(valido solo para cerebro-memory; para un token que funcione en ambos servicios "
-        "usa `cerebro token create`, sin el subcomando `memory`)."
+        "usa `cerebro token create`, sin el subcomando `memory`).",
     )
 
 
@@ -254,35 +256,34 @@ def cmd_token_list(args: argparse.Namespace, *, client: MemoryClient | None = No
     client = client or _client()
     try:
         tokens = client.list_tokens()
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-memory: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
     if not tokens:
-        print("(sin tokens todavia; el token root de .env sigue funcionando aparte)")
+        say("(sin tokens todavia; el token root de .env sigue funcionando aparte)", style="muted")
         return
 
-    print(f"{'name':<25} {'scopes':<20} {'contexts':<30} {'estado':<10} created_at")
-    print("-" * 110)
-    for t in tokens:
-        scopes = ",".join(t["scopes"])
-        contexts = ",".join(t["allowed_contexts"]) if t.get("allowed_contexts") else "*"
-        estado = "revocado" if t.get("revoked_at") else "activo"
-        print(f"{t['name']:<25} {scopes:<20} {contexts:<30} {estado:<10} {t['created_at']}")
+    table(
+        ["name", "scopes", "contexts", "estado", "created_at"],
+        [
+            [
+                t["name"],
+                ",".join(t["scopes"]),
+                ",".join(t["allowed_contexts"]) if t.get("allowed_contexts") else "*",
+                "revocado" if t.get("revoked_at") else "activo",
+                t["created_at"],
+            ]
+            for t in tokens
+        ],
+        styles=["label", None, None, "status", "muted"],
+    )
 
 
 def cmd_token_revoke(args: argparse.Namespace, *, client: MemoryClient | None = None) -> None:
     client = client or _client()
     try:
         client.revoke_token(args.name)
-    except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-memory: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail_request(exc)
 
-    print(f"Token '{args.name}' revocado (cerebro-memory).")
+    say(f"Token '{args.name}' revocado (cerebro-memory).", style="ok")
