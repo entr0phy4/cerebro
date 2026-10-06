@@ -103,7 +103,7 @@ class TestRestore:
     def test_declines_without_yes_flag_when_user_says_no(self, monkeypatch, tmp_path):
         dump = tmp_path / "backup.sql"
         dump.write_text("-- dump --")
-        monkeypatch.setattr("builtins.input", lambda _: "no")
+        monkeypatch.setattr("cerebro_cli.shared_commands.confirm", lambda _: False)
         run_mock = MagicMock()
         monkeypatch.setattr(shared_commands.subprocess, "run", run_mock)
         args = argparse.Namespace(file=str(dump), yes=False)

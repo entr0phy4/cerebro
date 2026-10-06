@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `notice`). Listings are tables with colored headers, identifiers and status
   words; stats are panels. Color only on a TTY. Document bodies, YAML and
   tokens stay plain text so they can be piped.
+- `cerebro-cli` prompts on a TTY (`questionary`): a missing subcommand opens a
+  menu, missing required arguments are asked, and reading or deleting a
+  document, flow, context, token or user offers a list instead of pasting the
+  id. Destructive confirms are yes/no (`--yes` still skips them). Without a
+  TTY, missing arguments still exit 2 and those confirms require `--yes`, so
+  pipes and scripts do not block.
 
 ## [2.6.1] - 2026-09-27
 
