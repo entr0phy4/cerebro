@@ -15,6 +15,7 @@ from cerebro_clients import CerebroAPIError, CerebroConnectionError, DocsClient
 from cerebro_memory.markdown_importer import iter_markdown_files
 
 from cerebro_cli.console import fail, metrics, plain, say, table
+from cerebro_cli.interactive import confirm, is_interactive, prompt_path
 
 
 def _fail_request(exc: CerebroConnectionError | CerebroAPIError) -> None:
@@ -30,17 +31,25 @@ def _client() -> DocsClient:
     return DocsClient()
 
 
+def _read_file(path: Path) -> str:
+    if not path.exists():
+        fail(f"Error: no existe el archivo '{path}'")
+    return path.read_text(encoding="utf-8")
+
+
 def _read_content(args: argparse.Namespace) -> str:
-    """Markdown content from --content-file, or stdin if omitted -- full
-    documents aren't practical as a single command-line argument."""
+    """Markdown content from --content-file, a prompted path, or stdin.
+
+    Full documents aren't practical as a single command-line argument. On a
+    TTY with no file, ask for a path instead of failing.
+    """
     if args.content_file:
-        path = Path(args.content_file)
-        if not path.exists():
-            fail(f"Error: no existe el archivo '{path}'")
-        return path.read_text(encoding="utf-8")
-    if sys.stdin.isatty():
-        fail("Error: pasa --content-file o redirige el contenido por stdin.")
-    return sys.stdin.read()
+        return _read_file(Path(args.content_file))
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    if is_interactive():
+        return _read_file(Path(prompt_path("Ruta del archivo Markdown")))
+    fail("Error: pasa --content-file o redirige el contenido por stdin.")
 
 
 def _print_document(doc: dict) -> None:
@@ -183,11 +192,13 @@ def cmd_patch_section(args: argparse.Namespace, *, client: DocsClient | None = N
     body = ""
     if args.operation != "delete":
         if args.body_file:
-            body = Path(args.body_file).read_text(encoding="utf-8")
+            body = _read_file(Path(args.body_file))
         elif args.body is not None:
             body = args.body
         elif not sys.stdin.isatty():
             body = sys.stdin.read()
+        elif is_interactive():
+            body = _read_file(Path(prompt_path("Ruta del archivo con el contenido del parche")))
 
     try:
         document = client.patch_section(
@@ -252,11 +263,11 @@ def cmd_history(args: argparse.Namespace, *, client: DocsClient | None = None) -
 
 def cmd_delete(args: argparse.Namespace, *, client: DocsClient | None = None) -> None:
     client = client or _client()
-    if not args.yes:
-        answer = input(f"Esto borrara el documento {args.document_id} (y su historial de versiones). Escribe 'yes' para continuar: ")
-        if answer.strip().lower() != "yes":
-            say("Cancelado.", style="muted")
-            return
+    if not args.yes and not confirm(
+        f"Esto borrara el documento {args.document_id} (y su historial de versiones). Continuar?"
+    ):
+        say("Cancelado.", style="muted")
+        return
 
     try:
         client.delete_document(args.document_id)

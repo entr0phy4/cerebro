@@ -542,6 +542,15 @@ structure — per-module subcommands (`cerebro memory ...`, `cerebro docs ...`,
 entirely on `cerebro-clients`, so it takes exactly the same HTTP path as the
 MCP server — no parallel implementation of any API call.
 
+On a TTY, a missing subcommand opens an arrow-key menu and a missing required
+argument is prompted. Reading or deleting a document or flow (and picking a
+memory context, a token name, or a user) lists the current values instead of
+asking for a pasted id. `docs save` / `docs update` / `patch-section` ask for
+a file path when stdin is a terminal. Destructive confirms (`docs delete`,
+`flow delete`, `restore`) are yes/no; `--yes` skips them. Without a TTY the
+CLI still exits 2 on a missing argument and refuses those confirms unless
+`--yes` is passed, so pipes and scripts do not block.
+
 - **`main.py`** wires an `argparse` tree: `memory` → `stats`/
   `export-disambiguations`/`import-markdown`/`token {create,list,revoke}`;
   `docs` → `category {create,list,rename,delete}`/`save`/`get`/`list`/

@@ -13,6 +13,7 @@ from pathlib import Path
 from cerebro_clients import CerebroAPIError, CerebroConnectionError, FlowsClient
 
 from cerebro_cli.console import fail, metrics, plain, say, table
+from cerebro_cli.interactive import confirm
 
 
 def _fail_request(exc: CerebroConnectionError | CerebroAPIError) -> None:
@@ -139,11 +140,11 @@ def cmd_update(args: argparse.Namespace, *, client: FlowsClient | None = None) -
 
 def cmd_delete(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
     client = client or _client()
-    if not args.yes:
-        answer = input(f"Esto borrara el flujo {args.code} (y su historial de versiones/ejecuciones). Escribe 'yes' para continuar: ")
-        if answer.strip().lower() != "yes":
-            say("Cancelado.", style="muted")
-            return
+    if not args.yes and not confirm(
+        f"Esto borrara el flujo {args.code} (y su historial de versiones/ejecuciones). Continuar?"
+    ):
+        say("Cancelado.", style="muted")
+        return
 
     try:
         client.delete_flow(args.code)

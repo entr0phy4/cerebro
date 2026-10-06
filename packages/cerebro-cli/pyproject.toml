@@ -18,6 +18,9 @@ dependencies = [
     # solo aparece en un TTY. PyInstaller la empaqueta solo cuando algún módulo
     # importado desde main.py importa esa consola.
     "rich>=13.7",
+    # Menús y prompts solo en un TTY. Rich sigue siendo la salida; questionary
+    # no pinta resultados. PyInstaller lo ve porque main.py lo importa.
+    "questionary>=2.0",
 ]
 
 [project.optional-dependencies]

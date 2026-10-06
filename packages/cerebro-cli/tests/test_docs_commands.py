@@ -193,7 +193,7 @@ class TestPatchSection:
 class TestDelete:
     def test_asks_confirmation_and_cancels(self, monkeypatch):
         client = MagicMock()
-        monkeypatch.setattr("builtins.input", lambda _: "no")
+        monkeypatch.setattr("cerebro_cli.docs_commands.confirm", lambda _: False)
         args = argparse.Namespace(document_id="d1", yes=False)
         docs_commands.cmd_delete(args, client=client)
         client.delete_document.assert_not_called()

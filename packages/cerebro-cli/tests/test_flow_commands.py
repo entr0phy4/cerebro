@@ -110,7 +110,7 @@ def test_update_reads_yaml_from_file(tmp_path, capsys):
 class TestDelete:
     def test_asks_confirmation_and_cancels(self, monkeypatch):
         client = MagicMock()
-        monkeypatch.setattr("builtins.input", lambda _: "no")
+        monkeypatch.setattr("cerebro_cli.flow_commands.confirm", lambda _: False)
         args = argparse.Namespace(code="INC-1", yes=False)
         flow_commands.cmd_delete(args, client=client)
         client.delete_flow.assert_not_called()

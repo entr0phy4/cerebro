@@ -28,6 +28,7 @@ from pathlib import Path
 from cerebro_clients import AuthClient, CerebroAPIError, CerebroConnectionError
 
 from cerebro_cli.console import fail, reveal, say
+from cerebro_cli.interactive import confirm
 
 def _find_repo_root() -> Path | None:
     """Best-effort monorepo root (parents[4] of this file -- where compose.yaml
@@ -116,15 +117,13 @@ def cmd_restore(args: argparse.Namespace) -> None:
     if not path.exists():
         fail(f"Error: no existe el archivo '{path}'")
 
-    if not args.yes:
-        answer = input(
-            f"Esto SOBREESCRIBIRA la base de datos '{POSTGRES_DB}' (schemas cerebro_memory y "
-            f"cerebro_docs) con el contenido de '{path}'. Esta accion es DESTRUCTIVA e "
-            "irreversible.\nEscribe 'yes' para continuar: "
-        )
-        if answer.strip().lower() != "yes":
-            say("Cancelado.", style="muted")
-            return
+    if not args.yes and not confirm(
+        f"Esto SOBREESCRIBIRA la base de datos '{POSTGRES_DB}' (schemas cerebro_memory y "
+        f"cerebro_docs) con el contenido de '{path}'. Esta accion es DESTRUCTIVA e "
+        "irreversible. Continuar?"
+    ):
+        say("Cancelado.", style="muted")
+        return
 
     cmd = ["docker", "compose", "exec", "-T", "postgres", "psql", "-U", POSTGRES_USER, "-d", POSTGRES_DB]
     say(f"Ejecutando: {' '.join(cmd)} < {path}")
